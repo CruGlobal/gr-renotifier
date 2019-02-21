@@ -22,4 +22,4 @@ RUN mvn \
 FROM openjdk:11.0.2-jre
 COPY --from=0 /usr/src/app/target/*.jar /jars/
 
-CMD ["java", "-classpath", "/jars/*", "org.cru.globalreg.renotifier.App"]
+CMD ["java", "-classpath", "/jars/*", "org.cru.globalreg.renotifier.Main"]
