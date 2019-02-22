@@ -7,17 +7,18 @@ import io.reactivex.Single;
 import io.reactivex.schedulers.Schedulers;
 import io.reactivex.subscribers.DefaultSubscriber;
 import java.io.IOException;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Instant;
+import java.util.HashSet;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicReference;
 import org.davidmoten.rx.jdbc.Database;
 import org.davidmoten.rx.jdbc.pool.NonBlockingConnectionPool;
 import org.davidmoten.rx.jdbc.pool.Pools;
@@ -28,42 +29,50 @@ public class Main {
 
     private static final Logger LOG = LoggerFactory.getLogger(Main.class);
 
-    @Parameter(names = "--username")
+    @Parameter(names = "--username", required = true)
     String username;
 
     @Parameter(names = "--password", password = true)
     String password;
 
-    @Parameter(names = "--database-host")
+    @Parameter(names = "--database-host", required = true)
     String databaseHost;
 
-    @Parameter(names = "--database-name")
+    @Parameter(names = "--database-name", required = true)
     String databaseName;
 
-    @Parameter(names = "--triggeredBy")
+    @Parameter(names = "--triggeredBy", required = true)
     String triggeredBy;
 
-    @Parameter(names = "--entity-type")
+    @Parameter(names = "--entity-type", required = true)
     String entityType;
 
-    @Parameter(names = "--subscription-url")
+    @Parameter(names = "--subscription-url", required = true)
     String subscriptionUrl;
 
     @Parameter(names = "--max-concurrent-requests")
-    private int maxConcurrentRequests = 20;
+    private int maxConcurrentRequests = 50;
 
     Database database;
 
-    public static void main( String[] args ) throws IOException, InterruptedException {
+    Sender sender;
+
+    public static void main( String[] args ) throws IOException, InterruptedException, URISyntaxException {
         Main main = new Main();
         JCommander.newBuilder()
             .addObject(main)
             .build()
             .parse(args);
+        if (main.password == null) {
+            main.password = System.getenv("PASSWORD");
+            Objects.requireNonNull(main.password, "need a password");
+        }
         main.run();
     }
 
-    void run() throws IOException, InterruptedException {
+    void run() throws IOException, InterruptedException, URISyntaxException {
+        sender = new Sender(new URI(subscriptionUrl), entityType, triggeredBy);
+
         final Path workingPath = Paths.get(".").toAbsolutePath();
         System.out.println( "Working Directory: " + workingPath);
         final String url = String.format("jdbc:postgresql://%s:5432/%s", databaseHost, databaseName);
@@ -83,8 +92,7 @@ public class Main {
         Counter counter = new Counter();
         final Flowable<UUID> uuidFlowable = flowable.doOnNext(counter);
 
-        ExecutorService service = Executors.newCachedThreadPool();
-
+        Set<CompletableFuture<Optional<UUID>>> futures = new HashSet<>();
         uuidFlowable.blockingSubscribe(new DefaultSubscriber<UUID>() {
 
             AtomicInteger level = new AtomicInteger(0);
@@ -97,21 +105,25 @@ public class Main {
             @Override
             public void onNext(UUID uuid) {
                 level.incrementAndGet();
-                service.submit(() -> {
-                    try {
-                        Thread.sleep(400);
-//                        System.out.println(level.getAndDecrement() + " on " + Thread.currentThread().getName());
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
-                    request(1);
-                });
+                final CompletableFuture<Optional<UUID>> future =
+                    sender.sendGrUpdateNotification(uuid)
+                        .exceptionally(throwable -> {
+                            LOG.error("http request failed", throwable);
+                            return Optional.of(uuid);
+                        })
+                        .thenApply(optionalId -> {
+                            if (optionalId.isPresent()) {
+                                LOG.error("Could not sync id {}", optionalId.get());
+                            }
+                            request(1);
+                            return optionalId;
+                        });
+                futures.add(future);
             }
 
             @Override
             public void onError(Throwable t) {
-                t.printStackTrace();
+                LOG.error("Error reading records", t);
             }
 
             @Override
@@ -120,9 +132,11 @@ public class Main {
             }
         });
 
-        service.shutdown();
         LOG.info("Waiting to finish current http requests...");
-        service.awaitTermination(5, TimeUnit.MINUTES);
+
+        CompletableFuture.allOf(futures.toArray(new CompletableFuture[0]))
+            .join();
+
         LOG.info("Done");
         database.close();
     }

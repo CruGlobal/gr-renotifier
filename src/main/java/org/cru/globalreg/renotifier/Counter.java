@@ -12,7 +12,7 @@ import org.slf4j.LoggerFactory;
 public class Counter implements Consumer<UUID> {
 
     private static final Logger LOG = LoggerFactory.getLogger(Counter.class);
-    final int secondsBetweenLogRecords = 1;
+    final int secondsBetweenLogRecords = 10;
     AtomicInteger counter = new AtomicInteger(0);
     AtomicInteger previous = new AtomicInteger(0);
     AtomicReference<Instant> next = new AtomicReference<>(Instant.now().plusSeconds(secondsBetweenLogRecords));
@@ -28,7 +28,7 @@ public class Counter implements Consumer<UUID> {
             if (maybeDifferentSnapshotNext == snapshotNext) {
                 int snapshotOfPrevious = previous.get();
                 final int difference = snapshotOfCounter - snapshotOfPrevious;
-                double rate = difference / secondsBetweenLogRecords;
+                double rate = difference / (double) secondsBetweenLogRecords;
                 LOG.info("read {} records total; recently {} at {} per second", snapshotOfCounter, difference, rate);
                 previous.set(snapshotOfCounter);
             }
