@@ -10,17 +10,24 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import org.davidmoten.rx.jdbc.Database;
 import org.davidmoten.rx.jdbc.pool.NonBlockingConnectionPool;
 import org.davidmoten.rx.jdbc.pool.Pools;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public class Main {
+
+    private static final Logger LOG = LoggerFactory.getLogger(Main.class);
+
     @Parameter(names = "--username")
     String username;
 
@@ -42,6 +49,9 @@ public class Main {
     @Parameter(names = "--subscription-url")
     String subscriptionUrl;
 
+    @Parameter(names = "--max-concurrent-requests")
+    private int maxConcurrentRequests = 20;
+
     Database database;
 
     public static void main( String[] args ) throws IOException, InterruptedException {
@@ -54,7 +64,6 @@ public class Main {
     }
 
     void run() throws IOException, InterruptedException {
-        System.out.println( "Hello World!" );
         final Path workingPath = Paths.get(".").toAbsolutePath();
         System.out.println( "Working Directory: " + workingPath);
         final String url = String.format("jdbc:postgresql://%s:5432/%s", databaseHost, databaseName);
@@ -70,22 +79,19 @@ public class Main {
         String query = Files.readString(workingPath.resolve(Path.of("src/main/sql/query.sql")));
 
         final Flowable<UUID> flowable = database.select(query).getAs(UUID.class);
-        final Flowable<UUID> uuidFlowable = flowable
-            .doOnNext(x -> System.out.println("emitted on " + Thread.currentThread().getName()));
-//        uuidFlowable
-//            .subscribe();
 
-//        flowable.subscribe(s -> System.out.println(s));
+        Counter counter = new Counter();
+        final Flowable<UUID> uuidFlowable = flowable.doOnNext(counter);
 
         ExecutorService service = Executors.newCachedThreadPool();
 
-        uuidFlowable.subscribe(new DefaultSubscriber<UUID>() {
+        uuidFlowable.blockingSubscribe(new DefaultSubscriber<UUID>() {
 
             AtomicInteger level = new AtomicInteger(0);
 
             @Override
             protected void onStart() {
-                request(10);
+                request(maxConcurrentRequests);
             }
 
             @Override
@@ -93,8 +99,8 @@ public class Main {
                 level.incrementAndGet();
                 service.submit(() -> {
                     try {
-                        Thread.sleep(50);
-                        System.out.println(level.getAndDecrement() + " on " + Thread.currentThread().getName());
+                        Thread.sleep(400);
+//                        System.out.println(level.getAndDecrement() + " on " + Thread.currentThread().getName());
                     } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         return;
@@ -110,19 +116,14 @@ public class Main {
 
             @Override
             public void onComplete() {
+                counter.complete();
             }
         });
 
-//        uuidFlowable.blockingSubscribe();
-
-//        flowable.blockingForEach(System.out::println);
-        count(flowable);
-
-        Thread.sleep(5000);
-
         service.shutdown();
-        service.awaitTermination(5, TimeUnit.SECONDS);
-
+        LOG.info("Waiting to finish current http requests...");
+        service.awaitTermination(5, TimeUnit.MINUTES);
+        LOG.info("Done");
         database.close();
     }
 
