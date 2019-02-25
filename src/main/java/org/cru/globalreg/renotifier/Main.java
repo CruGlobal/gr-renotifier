@@ -41,14 +41,23 @@ public class Main {
     @Parameter(names = "--database-name", required = true)
     String databaseName;
 
-    @Parameter(names = "--triggeredBy", required = true)
+    @Parameter(names = "--triggered-by", required = true)
     String triggeredBy;
 
     @Parameter(names = "--entity-type", required = true)
     String entityType;
 
+    @Parameter(names = "--owned-by", required = true)
+    String ownedBy;
+
+    @Parameter(names = "--updated-after", required = true)
+    String updatedAfter;
+
     @Parameter(names = "--subscription-url", required = true)
     String subscriptionUrl;
+
+    @Parameter(names = "--limit")
+    int limit = -1;
 
     @Parameter(names = "--max-concurrent-requests")
     private int maxConcurrentRequests = 50;
@@ -85,9 +94,13 @@ public class Main {
             .build();
         database = Database.from(pool);
 
-        String query = Files.readString(workingPath.resolve(Path.of("src/main/sql/query.sql")));
+        String query = sql();
 
-        final Flowable<UUID> flowable = database.select(query).getAs(UUID.class);
+        final Flowable<UUID> flowable = database
+            .select(query)
+            .parameter("owned_by", ownedBy)
+            .parameter("updated_after", updatedAfter)
+            .getAs(UUID.class);
 
         Counter counter = new Counter();
         final Flowable<UUID> uuidFlowable = flowable.doOnNext(counter);
@@ -139,6 +152,19 @@ public class Main {
 
         LOG.info("Done");
         database.close();
+    }
+
+    private String sql() {
+        String template = "select _id\n" +
+            "from {{entityType}}\n" +
+            "where _system_id = uuid(:owned_by)\n" +
+            "and _updated_at > :updated_after::timestamp\n" +
+            "order by _updated_at asc";
+        if (limit >= 0) {
+            template = template + " limit " + limit;
+        }
+
+        return template.replace("{{entityType}}", entityType);
     }
 
     private void count(Flowable<UUID> flowable) {
