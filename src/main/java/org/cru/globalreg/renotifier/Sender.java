@@ -1,6 +1,5 @@
 package org.cru.globalreg.renotifier;
 
-import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -32,8 +31,8 @@ public class Sender {
     }
 
 
-    public CompletableFuture<Optional<UUID>> sendGrUpdateNotification(UUID id) {
-        String body = buildBody(id);
+    public CompletableFuture<Optional<UUID>> sendGrUpdateNotification(PersonRecord record) {
+        String body = buildBody(record);
         HttpRequest post = HttpRequest.newBuilder()
             .uri(uri)
             .POST(BodyPublishers.ofString(body))
@@ -53,7 +52,7 @@ public class Sender {
                     "unsuccessful response from the subscription resource: {} \n  {}",
                     code,
                     response.body());
-                return Optional.of(id);
+                return Optional.of(record.id);
             } else {
                 LOG.debug("successful response");
             }
@@ -61,10 +60,10 @@ public class Sender {
         });
     }
 
-    private String buildBody(UUID id) {
+    private String buildBody(PersonRecord record) {
         // poor man's json for now
         String template = "{\n" +
-            "  \"action\": \"updated\",\n" +
+            "  \"action\": \"{{action}}\",\n" +
             "  \"id\": \"{{id}}\",\n" +
             "  \"client_integration_id\": null,\n" +
             "  \"triggered_by\": \"{{triggeredBy}}\",\n" +
@@ -72,8 +71,13 @@ public class Sender {
             "}";
 
         return template
-            .replace("{{id}}", id.toString())
+            .replace("{{id}}", record.id.toString())
+            .replace("{{action}}", determineAction(record))
             .replace("{{triggeredBy}}", triggeredBy)
             .replace("{{entityType}}", entityType);
+    }
+
+    private String determineAction(PersonRecord record) {
+        return record.deletedAt.map(ignoredDate -> "deleted").orElse("updated");
     }
 }

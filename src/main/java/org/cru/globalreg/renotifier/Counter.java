@@ -3,13 +3,12 @@ package org.cru.globalreg.renotifier;
 import io.reactivex.functions.Consumer;
 import java.time.Duration;
 import java.time.Instant;
-import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-public class Counter implements Consumer<UUID> {
+public class Counter implements Consumer<PersonRecord> {
 
     private static final Logger LOG = LoggerFactory.getLogger(Counter.class);
     final int secondsBetweenLogRecords = 10;
@@ -18,7 +17,7 @@ public class Counter implements Consumer<UUID> {
     AtomicReference<Instant> next = new AtomicReference<>(Instant.now().plusSeconds(secondsBetweenLogRecords));
 
     @Override
-    public void accept(UUID id) throws Exception {
+    public void accept(PersonRecord record) throws Exception {
         final int snapshotOfCounter = counter.incrementAndGet();
         Instant currentNow = Instant.now();
         Instant snapshotNext = next.get();

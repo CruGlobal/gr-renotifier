@@ -22,9 +22,11 @@ class SenderInterfaceTest {
 
     @Test
     void sendGrUpdateNotification() throws ExecutionException, InterruptedException {
-        final Optional<UUID> optionalBadUuid = sender.sendGrUpdateNotification(UUID.fromString(
-            "0b10bffe-df5a-11e5-9c2e-1228c4aab4b9"))
-            .get();
+        final PersonRecord record = new PersonRecord(
+            UUID.fromString("0b10bffe-df5a-11e5-9c2e-1228c4aab4b9"),
+            Optional.empty()
+        );
+        final Optional<UUID> optionalBadUuid = sender.sendGrUpdateNotification(record).get();
 
         if (optionalBadUuid.isPresent()) {
             throw new AssertionError("failure to update " + optionalBadUuid.get());
