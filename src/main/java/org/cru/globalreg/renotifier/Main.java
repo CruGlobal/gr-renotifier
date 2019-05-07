@@ -9,9 +9,9 @@ import io.reactivex.subscribers.DefaultSubscriber;
 import java.io.IOException;
 import java.net.URI;
 import java.net.URISyntaxException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.LocalDateTime;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Optional;
@@ -96,17 +96,20 @@ public class Main {
 
         String query = sql();
 
-        final Flowable<UUID> flowable = database
+        final Flowable<PersonRecord> flowable = database
             .select(query)
             .parameter("owned_by", ownedBy)
             .parameter("updated_after", updatedAfter)
-            .getAs(UUID.class);
+            .get((rs -> new PersonRecord(
+                rs.getObject(1, UUID.class),
+                Optional.ofNullable(rs.getObject(2, LocalDateTime.class))
+            )));
 
         Counter counter = new Counter();
-        final Flowable<UUID> uuidFlowable = flowable.doOnNext(counter);
+        final Flowable<PersonRecord> recordFlowable = flowable.doOnNext(counter);
 
         Set<CompletableFuture<Optional<UUID>>> futures = new HashSet<>();
-        uuidFlowable.blockingSubscribe(new DefaultSubscriber<UUID>() {
+        recordFlowable.blockingSubscribe(new DefaultSubscriber<PersonRecord>() {
 
             AtomicInteger level = new AtomicInteger(0);
 
@@ -116,13 +119,13 @@ public class Main {
             }
 
             @Override
-            public void onNext(UUID uuid) {
+            public void onNext(PersonRecord record) {
                 level.incrementAndGet();
                 final CompletableFuture<Optional<UUID>> future =
-                    sender.sendGrUpdateNotification(uuid)
+                    sender.sendGrUpdateNotification(record)
                         .exceptionally(throwable -> {
                             LOG.error("http request failed", throwable);
-                            return Optional.of(uuid);
+                            return Optional.of(record.id);
                         })
                         .thenApply(optionalId -> {
                             if (optionalId.isPresent()) {
@@ -155,7 +158,7 @@ public class Main {
     }
 
     private String sql() {
-        String template = "select _id\n" +
+        String template = "select _id, _deleted_at\n" +
             "from {{entityType}}\n" +
             "where _system_id = uuid(:owned_by)\n" +
             "and _updated_at > :updated_after::timestamp\n" +
@@ -175,4 +178,5 @@ public class Main {
 
         System.out.printf("count: " + count1);
     }
+
 }
